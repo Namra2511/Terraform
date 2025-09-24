@@ -54,32 +54,40 @@ jobs:
     - name: Detect current infrastructure state
       id: current-status
       run: |
-        terraform plan \
-          -var="enable_preview_pool=true" \
-          -var="do_token=${{ secrets.DO_TOKEN }}" \
-          -var="do_cluster_name=${{ secrets.DO_CLUSTER_NAME }}" \
-          -var="do_alert_email=${{ secrets.DO_ALERT_EMAIL }}" \
-          -var="do_cluster_version=${{ secrets.DO_CLUSTER_VERSION }}" \
-          -var="preview_node_size=${{ secrets.PREVIEW_NODE_SIZE }}" \
-          -var="cluster_issuer_email=${{ secrets.CLUSTER_ISSUER_EMAIL }}" \
-          -detailed-exitcode > /dev/null 2>&1
+        # Check actual infrastructure state using terraform show
+        set +e
+        terraform show -json | jq -r '.values.root_module.child_modules[]? | select(.address=="module.digital_ocean") | .resources[]? | select(.type=="digitalocean_kubernetes_node_pool" and .name=="do_cluster_preview_pool") | .address' > /dev/null 2>&1
         
-        case $? in
-          0)
-            echo "currently-enabled=true" >> $GITHUB_OUTPUT
-            ;;
-          2)
-            echo "currently-enabled=false" >> $GITHUB_OUTPUT
-            ;;
-          *)
-            echo "Error: Failed to determine infrastructure state" >&2
-            exit 1
-            ;;
-        esac
+        if [ $? -eq 0 ]; then
+          # Preview pool exists in state
+          CURRENT_STATE=1
+          echo "currently-enabled=1" >> $GITHUB_OUTPUT
+        else
+          # Preview pool does not exist in state  
+          CURRENT_STATE=0
+          echo "currently-enabled=0" >> $GITHUB_OUTPUT
+        fi
+        set -e
+        
+        echo "Infrastructure state: $CURRENT_STATE (0=disabled, 1=enabled)"
+        
+    - name: Determine required state
+      id: required-state
+      run: |
+        if [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "true" ]; then
+          REQUIRED_STATE=1
+          echo "required-state=1" >> $GITHUB_OUTPUT
+        else
+          REQUIRED_STATE=0  
+          echo "required-state=0" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "Required state: $REQUIRED_STATE (0=disabled, 1=enabled)"
         
     - name: Enable preview pool
-      if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == 'false'
+      if: steps.required-state.outputs.required-state == '1' && steps.current-status.outputs.currently-enabled == '0'
       run: |
+        echo "Toggling: 0 → 1 (Enabling preview pool)"
         terraform apply -auto-approve \
           -var="enable_preview_pool=true" \
           -var="do_token=${{ secrets.DO_TOKEN }}" \
@@ -90,8 +98,9 @@ jobs:
           -var="cluster_issuer_email=${{ secrets.CLUSTER_ISSUER_EMAIL }}"
           
     - name: Disable preview pool
-      if: steps.check-prs.outputs.needs-preview-pool == 'false' && steps.current-status.outputs.currently-enabled == 'true'
+      if: steps.required-state.outputs.required-state == '0' && steps.current-status.outputs.currently-enabled == '1'
       run: |
+        echo "Toggling: 1 → 0 (Disabling preview pool)"
         terraform apply -auto-approve \
           -var="enable_preview_pool=false" \
           -var="do_token=${{ secrets.DO_TOKEN }}" \
@@ -115,8 +124,8 @@ jobs:
         
         EOF
         
-        if [ "${{ steps.check-prs.outputs.needs-preview-pool }}" != "${{ steps.current-status.outputs.currently-enabled }}" ]; then
-          if [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "true" ]; then
+        if [ "${{ steps.required-state.outputs.required-state }}" != "${{ steps.current-status.outputs.currently-enabled }}" ]; then
+          if [ "${{ steps.required-state.outputs.required-state }}" == "1" ]; then
             echo "**Action:** Enabled preview pool" >> $GITHUB_STEP_SUMMARY
           else
             echo "**Action:** Disabled preview pool" >> $GITHUB_STEP_SUMMARY

@@ -21,34 +21,20 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
-          try {
-            // Get open PRs from the flask-react-template repository
-            const { data: prs } = await github.rest.pulls.list({
-              owner: 'jalantechnologies',
-              repo: 'flask-react-template',
-              state: 'open'
-            });
-            
-            // Filter out draft PRs
-            const nonDraftPrs = prs.filter(pr => !pr.draft);
-            const prCount = nonDraftPrs.length;
-            
-            console.log(`Found ${prCount} open non-draft PRs in flask-react-template`);
-            
-            // Log PR details for debugging
-            nonDraftPrs.forEach(pr => {
-              console.log(`- PR #${pr.number}: ${pr.title} (${pr.user.login})`);
-            });
-            
-            // Set outputs
-            core.setOutput('pr-count', prCount);
-            core.setOutput('needs-preview-pool', prCount > 0 ? 'true' : 'false');
-            
-            return { prCount, needsPreviewPool };
-          } catch (error) {
-            console.error('Error checking PRs:', error);
-            core.setFailed(`Failed to check PRs: ${error.message}`);
-          }
+          const { data: prs } = await github.rest.pulls.list({
+            owner: 'Namra2511',
+            repo: 'test-crud-app',
+            state: 'open'
+          });
+          
+          const nonDraftPrs = prs.filter(pr => !pr.draft);
+          const prCount = nonDraftPrs.length;
+          const needsPreviewPool = prCount > 0;
+          
+          core.setOutput('pr-count', prCount);
+          core.setOutput('needs-preview-pool', needsPreviewPool);
+          
+          return { prCount, needsPreviewPool };
           
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3

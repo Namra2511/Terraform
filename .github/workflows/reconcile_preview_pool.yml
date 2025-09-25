@@ -96,19 +96,40 @@ jobs:
         echo "📋 Current resources in state:"
         cat state_resources.txt || echo "No state resources found"
         
-        # Check if preview pool resource exists in state
-        if grep -q "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool\[0\]" state_resources.txt; then
+        # Check if preview pool resource exists in state (handle both indexed and non-indexed)
+        if grep -q "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool" state_resources.txt; then
           echo "✅ Preview pool resource found in state - checking if it's actually running..."
           
-          # Get detailed resource information
-          terraform state show "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool[0]" > pool_details.txt 2>/dev/null || true
+          # Try to get the exact resource name from state list
+          RESOURCE_NAME=$(grep "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool" state_resources.txt | head -1)
+          echo "🔍 Found resource: $RESOURCE_NAME"
+          
+          # Get detailed resource information using the exact name from state
+          terraform state show "$RESOURCE_NAME" > pool_details.txt 2>/dev/null || true
           
           if [ -s pool_details.txt ]; then
-            # Extract resource ID to confirm it exists
+            # Extract key resource attributes
+            POOL_NAME=$(grep -E "name\s*=" pool_details.txt | head -1 | sed 's/.*= "//' | sed 's/".*//')
             POOL_ID=$(grep -E "id\s*=" pool_details.txt | head -1 | sed 's/.*= "//' | sed 's/".*//')
-            echo "🎯 Preview pool ID found: $POOL_ID"
-            echo "✅ Preview pool is currently ENABLED (resource exists in state)"
-            echo "currently-enabled=1" >> $GITHUB_OUTPUT
+            NODE_COUNT=$(grep -E "actual_node_count\s*=" pool_details.txt | head -1 | sed 's/.*= //' | sed 's/[^0-9]//g')
+            
+            echo "🔍 Resource details:"
+            echo "  - Pool Name: $POOL_NAME"
+            echo "  - Pool ID: $POOL_ID"
+            echo "  - Active Nodes: $NODE_COUNT"
+            
+            # Check if it's the staging pool and has active nodes
+            if [[ "$POOL_NAME" == *"staging-pool"* ]] && [[ "$NODE_COUNT" -gt 0 ]]; then
+              echo "✅ Preview pool is currently ENABLED"
+              echo "   - Staging pool '$POOL_NAME' is running with $NODE_COUNT active nodes"
+              echo "currently-enabled=1" >> $GITHUB_OUTPUT
+            elif [[ "$POOL_NAME" == *"staging-pool"* ]] && [[ "$NODE_COUNT" -eq 0 ]]; then
+              echo "⚠️ Staging pool exists but has 0 active nodes - considering DISABLED"
+              echo "currently-enabled=0" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ Resource exists but not a staging pool (name: $POOL_NAME)"
+              echo "currently-enabled=0" >> $GITHUB_OUTPUT
+            fi
           else
             echo "⚠️ Preview pool resource in state but no details - assuming disabled"
             echo "currently-enabled=0" >> $GITHUB_OUTPUT

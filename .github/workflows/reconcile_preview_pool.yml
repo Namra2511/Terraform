@@ -89,7 +89,6 @@ jobs:
         terraform plan \
           -var="enable_preview_pool=true" \
           -detailed-exitcode \
-          -out=detection.tfplan \
           > plan_output.txt 2>&1
         
         EXIT_CODE=$?
@@ -125,7 +124,7 @@ jobs:
       if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '0'
       run: |
         echo "📋 Terraform plan to enable preview pool:"
-        terraform show -no-color detection.tfplan
+        terraform plan -var="enable_preview_pool=true" -no-color
         
     - name: Enable Preview Pool
       if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '0'
@@ -185,7 +184,7 @@ jobs:
       if: always()
       run: |
         echo "🧹 Cleaning up temporary files..."
-        rm -f detection.tfplan plan_output.txt || true
+        rm -f plan_output.txt || true
         echo "✅ Cleanup completed"
         
     - name: Workflow Summary

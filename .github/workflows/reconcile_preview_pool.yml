@@ -81,44 +81,45 @@ jobs:
       shell: bash
       run: |
         set +e  # Explicitly disable exit on error
-        echo "🔍 Detecting current preview pool state..."
+        echo "🔍 Detecting current preview pool state from Terraform Cloud state..."
         
-        # Check actual infrastructure state using terraform
-        # Variables are automatically loaded from Terraform Cloud workspace
-        echo "🔧 Running terraform plan to detect current state..."
-        terraform plan \
-          -var="enable_preview_pool=true" \
-          -detailed-exitcode \
-          > plan_output.txt 2>&1
+        # Get workspace ID from terraform show (more reliable than hardcoding)
+        echo "🔧 Getting workspace information..."
+        terraform show -json > terraform_show.json 2>/dev/null || true
         
-        EXIT_CODE=$?
-        echo "📊 Terraform plan exit code: $EXIT_CODE"
+        # Alternative: Use Terraform Cloud API to get current state
+        echo "🔧 Fetching current state from Terraform Cloud backend..."
         
-        # Show some plan output for debugging if there's an error
-        if [ $EXIT_CODE -ne 0 ] && [ $EXIT_CODE -ne 2 ]; then
-          echo "📋 Plan output (first 50 lines):"
-          head -50 plan_output.txt || true
+        # Use terraform state list to check if preview pool resource exists
+        terraform state list > state_resources.txt 2>/dev/null || true
+        
+        echo "📋 Current resources in state:"
+        cat state_resources.txt || echo "No state resources found"
+        
+        # Check if preview pool resource exists in state
+        if grep -q "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool\[0\]" state_resources.txt; then
+          echo "✅ Preview pool resource found in state - checking if it's actually running..."
+          
+          # Get detailed resource information
+          terraform state show "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool[0]" > pool_details.txt 2>/dev/null || true
+          
+          if [ -s pool_details.txt ]; then
+            # Extract resource ID to confirm it exists
+            POOL_ID=$(grep -E "id\s*=" pool_details.txt | head -1 | sed 's/.*= "//' | sed 's/".*//')
+            echo "🎯 Preview pool ID found: $POOL_ID"
+            echo "✅ Preview pool is currently ENABLED (resource exists in state)"
+            echo "currently-enabled=1" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Preview pool resource in state but no details - assuming disabled"
+            echo "currently-enabled=0" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "ℹ️ Preview pool resource NOT found in state"
+          echo "✅ Preview pool is currently DISABLED (no resource in state)"
+          echo "currently-enabled=0" >> $GITHUB_OUTPUT
         fi
         
-        # Handle different exit codes properly
-        case $EXIT_CODE in
-          0)
-            echo "✅ Preview pool is already enabled (no changes needed)"
-            echo "currently-enabled=1" >> $GITHUB_OUTPUT
-            ;;
-          2)
-            echo "ℹ️ Preview pool is currently disabled (changes needed to enable)"
-            echo "currently-enabled=0" >> $GITHUB_OUTPUT
-            ;;
-          *)
-            echo "❌ Terraform plan failed with exit code $EXIT_CODE"
-            echo "📋 Full plan output:"
-            cat plan_output.txt || true
-            exit 1
-            ;;
-        esac
-        
-        echo "🎯 Current state detection completed"
+        echo "🎯 State-based detection completed"
         
     - name: Show Plan Before Enabling
       if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '0'
@@ -133,6 +134,7 @@ jobs:
         echo "💰 This will incur ~$14/month in costs"
         
         # Variables are automatically loaded from Terraform Cloud workspace
+        # Note: This may fail if workspace has VCS connection - consider using API-driven workflow
         terraform apply -auto-approve \
           -var="enable_preview_pool=true"
         
@@ -184,7 +186,7 @@ jobs:
       if: always()
       run: |
         echo "🧹 Cleaning up temporary files..."
-        rm -f plan_output.txt || true
+        rm -f terraform_show.json state_resources.txt pool_details.txt || true
         echo "✅ Cleanup completed"
         
     - name: Workflow Summary

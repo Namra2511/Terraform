@@ -28,5 +28,5 @@ variable "enable_preview_pool" {
 variable "preview_node_size" {
   description = "The slug identifier for the type of Droplet to be used in the preview node pool"
   type        = string
-  default     = "s-1vcpu-2gb"
+  default     = "s-2vcpu-4gb"
 }

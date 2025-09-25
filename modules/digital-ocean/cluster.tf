@@ -28,7 +28,7 @@ variable "enable_preview_pool" {
 variable "preview_node_size" {
   description = "The slug identifier for the type of Droplet to be used in the preview node pool"
   type        = string
-  default     = "s-1vcpu-2gb"
+  default     = "s-2vcpu-4gb"
 }
 
 resource "digitalocean_kubernetes_cluster" "do_cluster" {
@@ -53,9 +53,9 @@ resource "digitalocean_kubernetes_cluster" "do_cluster" {
   }
 }
 
-resource "digitalocean_kubernetes_node_pool" "do_cluster_preview_pool" {
+resource "digitalocean_kubernetes_node_pool" "do_cluster_staging_pool" {
   count      = var.enable_preview_pool ? 1 : 0
-  name       = "${var.do_cluster_name}-preview-pool"
+  name       = "${var.do_cluster_name}-staging-pool"
   cluster_id = digitalocean_kubernetes_cluster.do_cluster.id
   size       = var.preview_node_size
   auto_scale = true
@@ -69,12 +69,6 @@ resource "digitalocean_kubernetes_node_pool" "do_cluster_preview_pool" {
       max_nodes,
     ]
   }
-}
-
-# Test resource to verify conditional logic - safe to create/destroy
-resource "digitalocean_tag" "preview_pool_test" {
-  count = var.enable_preview_pool ? 1 : 0
-  name  = "${var.do_cluster_name}-preview-pool-test"
 }
 
 output "do_cluster_id" {

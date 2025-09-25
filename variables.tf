@@ -22,7 +22,7 @@ variable "do_cluster_version" {
 variable "enable_preview_pool" {
   description = "Whether to enable the preview node pool for PR environments"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "preview_node_size" {

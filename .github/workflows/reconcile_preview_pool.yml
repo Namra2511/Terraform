@@ -29,8 +29,8 @@ jobs:
           try {
             // Get open PRs from the flask-react-template repository
             const { data: prs } = await github.rest.pulls.list({
-              owner: 'jalantechnologies',
-              repo: 'flask-react-template',
+              owner: 'Namra2511',
+              repo: 'test-crud-app',
               state: 'open'
             });
             

@@ -2,7 +2,7 @@ terraform {
   cloud {
     organization = "jalantechnologies"
     workspaces {
-      name = "platform-digitalocean-tf"
+      name = "Test-cluster"
     }
   }
 }

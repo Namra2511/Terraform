@@ -79,11 +79,11 @@ jobs:
     - name: Detect current infrastructure state
       id: current-status
       run: |
-        set -e  # Exit on error
         echo "🔍 Detecting current preview pool state..."
         
         # Check actual infrastructure state using terraform
         # Variables are automatically loaded from Terraform Cloud workspace
+        # Note: We don't use 'set -e' here because we need to handle terraform exit codes manually
         terraform plan \
           -var="enable_preview_pool=true" \
           -detailed-exitcode \

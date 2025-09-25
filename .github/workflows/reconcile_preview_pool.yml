@@ -78,12 +78,14 @@ jobs:
       
     - name: Detect current infrastructure state
       id: current-status
+      shell: bash
       run: |
+        set +e  # Explicitly disable exit on error
         echo "🔍 Detecting current preview pool state..."
         
         # Check actual infrastructure state using terraform
         # Variables are automatically loaded from Terraform Cloud workspace
-        # Note: We don't use 'set -e' here because we need to handle terraform exit codes manually
+        echo "🔧 Running terraform plan to detect current state..."
         terraform plan \
           -var="enable_preview_pool=true" \
           -detailed-exitcode \
@@ -92,6 +94,12 @@ jobs:
         
         EXIT_CODE=$?
         echo "📊 Terraform plan exit code: $EXIT_CODE"
+        
+        # Show some plan output for debugging if there's an error
+        if [ $EXIT_CODE -ne 0 ] && [ $EXIT_CODE -ne 2 ]; then
+          echo "📋 Plan output (first 50 lines):"
+          head -50 plan_output.txt || true
+        fi
         
         # Handle different exit codes properly
         case $EXIT_CODE in
@@ -105,8 +113,8 @@ jobs:
             ;;
           *)
             echo "❌ Terraform plan failed with exit code $EXIT_CODE"
-            echo "📋 Plan output:"
-            cat plan_output.txt
+            echo "📋 Full plan output:"
+            cat plan_output.txt || true
             exit 1
             ;;
         esac

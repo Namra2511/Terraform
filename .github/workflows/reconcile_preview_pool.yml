@@ -6,6 +6,11 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch: # Allow manual trigger
 
+# Prevent concurrent runs to avoid state conflicts
+concurrency:
+  group: terraform-preview-pool-reconcile
+  cancel-in-progress: false
+
 jobs:
   reconcile-preview-pool:
     name: Auto-manage Preview Pool
@@ -57,47 +62,138 @@ jobs:
       uses: hashicorp/setup-terraform@v3
       with:
         cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+        terraform_wrapper: false  # Disable wrapper for better error handling
         
     - name: Terraform Init
-      run: terraform init
+      run: |
+        echo "🔧 Initializing Terraform..."
+        terraform init
+        echo "✅ Terraform initialization completed"
+        
+    - name: Terraform Validate
+      run: |
+        echo "🔍 Validating Terraform configuration..."
+        terraform validate
+        echo "✅ Terraform configuration is valid"
       
     - name: Detect current infrastructure state
       id: current-status
       run: |
+        set -e  # Exit on error
+        echo "🔍 Detecting current preview pool state..."
+        
         # Check actual infrastructure state using terraform
         # Variables are automatically loaded from Terraform Cloud workspace
         terraform plan \
           -var="enable_preview_pool=true" \
-          -detailed-exitcode >/dev/null 2>&1 || true
+          -detailed-exitcode \
+          -out=detection.tfplan \
+          > plan_output.txt 2>&1
         
-        # Simple 0/1 toggle based on infrastructure state
-        if [ $? -eq 0 ]; then
-          echo "currently-enabled=1" >> $GITHUB_OUTPUT
-        else
-          echo "currently-enabled=0" >> $GITHUB_OUTPUT
-        fi
+        EXIT_CODE=$?
+        echo "📊 Terraform plan exit code: $EXIT_CODE"
+        
+        # Handle different exit codes properly
+        case $EXIT_CODE in
+          0)
+            echo "✅ Preview pool is already enabled (no changes needed)"
+            echo "currently-enabled=1" >> $GITHUB_OUTPUT
+            ;;
+          2)
+            echo "ℹ️ Preview pool is currently disabled (changes needed to enable)"
+            echo "currently-enabled=0" >> $GITHUB_OUTPUT
+            ;;
+          *)
+            echo "❌ Terraform plan failed with exit code $EXIT_CODE"
+            echo "📋 Plan output:"
+            cat plan_output.txt
+            exit 1
+            ;;
+        esac
+        
+        echo "🎯 Current state detection completed"
+        
+    - name: Show Plan Before Enabling
+      if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '0'
+      run: |
+        echo "📋 Terraform plan to enable preview pool:"
+        terraform show -no-color detection.tfplan
         
     - name: Enable Preview Pool
       if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '0'
       run: |
-        echo " Enabling preview pool - found ${{ steps.check-prs.outputs.pr-count }} open PRs"
+        echo "🚀 Enabling preview pool - found ${{ steps.check-prs.outputs.pr-count }} open PRs"
+        echo "💰 This will incur ~$14/month in costs"
+        
         # Variables are automatically loaded from Terraform Cloud workspace
         terraform apply -auto-approve \
           -var="enable_preview_pool=true"
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Preview pool successfully enabled"
+          echo "🎯 Preview environment is now available for PR testing"
+        else
+          echo "❌ Failed to enable preview pool"
+          exit 1
+        fi
           
+    - name: Show Plan Before Disabling
+      if: steps.check-prs.outputs.needs-preview-pool == 'false' && steps.current-status.outputs.currently-enabled == '1'
+      run: |
+        echo "📋 Terraform plan to disable preview pool:"
+        terraform plan -var="enable_preview_pool=false" -no-color
+        
     - name: Disable Preview Pool
       if: steps.check-prs.outputs.needs-preview-pool == 'false' && steps.current-status.outputs.currently-enabled == '1'
       run: |
-        echo " Disabling preview pool - no open PRs found"
+        echo "💰 Disabling preview pool - no open PRs found"
+        echo "💵 This will save ~$14/month in costs"
+        
         # Variables are automatically loaded from Terraform Cloud workspace
         terraform apply -auto-approve \
           -var="enable_preview_pool=false"
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Preview pool successfully disabled"
+          echo "💰 Cost savings activated - preview resources destroyed"
+        else
+          echo "❌ Failed to disable preview pool"
+          exit 1
+        fi
           
     - name: No Action Needed
       if: (steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '1') || (steps.check-prs.outputs.needs-preview-pool == 'false' && steps.current-status.outputs.currently-enabled == '0')
       run: |
+        echo "ℹ️ Infrastructure state matches requirements - no action needed"
         if [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "true" ]; then
-          echo "✅ Preview pool already enabled - ${{ steps.check-prs.outputs.pr-count }} open PRs"
+          echo "✅ Preview pool already enabled for ${{ steps.check-prs.outputs.pr-count }} open PRs"
+          echo "🎯 Preview environment is ready for development"
         else
-          echo "✅ Preview pool already disabled - no open PRs"
+          echo "✅ Preview pool already disabled - no open PRs detected"
+          echo "💰 Cost optimization is active - no unnecessary resources running"
+        fi
+        
+    - name: Cleanup Temporary Files
+      if: always()
+      run: |
+        echo "🧹 Cleaning up temporary files..."
+        rm -f detection.tfplan plan_output.txt || true
+        echo "✅ Cleanup completed"
+        
+    - name: Workflow Summary
+      if: always()
+      run: |
+        echo "## 📊 Reconciliation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository**: jalantechnologies/flask-react-template" >> $GITHUB_STEP_SUMMARY
+        echo "- **Open PRs**: ${{ steps.check-prs.outputs.pr-count }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Preview pool needed**: ${{ steps.check-prs.outputs.needs-preview-pool }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Currently enabled**: ${{ steps.current-status.outputs.currently-enabled }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Workflow status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "true" ] && [ "${{ steps.current-status.outputs.currently-enabled }}" == "0" ]; then
+          echo "- **Action taken**: 🚀 Enabled preview pool" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "false" ] && [ "${{ steps.current-status.outputs.currently-enabled }}" == "1" ]; then
+          echo "- **Action taken**: 💰 Disabled preview pool (saving ~$14/month)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Action taken**: ℹ️ No change needed" >> $GITHUB_STEP_SUMMARY
         fi

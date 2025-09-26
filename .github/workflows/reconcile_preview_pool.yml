@@ -6,9 +6,9 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch: # Allow manual trigger
 
-# Prevent concurrent runs to avoid state conflicts
+# Prevent concurrent runs with any preview pool operations to avoid state conflicts
 concurrency:
-  group: terraform-preview-pool-reconcile
+  group: terraform-preview-pool-operations
   cancel-in-progress: false
 
 jobs:

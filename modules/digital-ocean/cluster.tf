@@ -16,7 +16,7 @@ variable "do_cluster_region" {
 variable "do_cluster_node_size" {
   # list is available at https://slugs.do-api.dev/ on "Droplet Sizes"
   description = "The slug identifier for the type of Droplet to be used as workers in the node pool"
-  default     = "s-2vcpu-4gb"
+  default     = "s-1vcpu-2gb"
 }
 
 variable "enable_preview_pool" {
@@ -28,7 +28,7 @@ variable "enable_preview_pool" {
 variable "preview_node_size" {
   description = "The slug identifier for the type of Droplet to be used in the preview node pool"
   type        = string
-  default     = "s-2vcpu-4gb"
+  default     = "s-1vcpu-2gb"
 }
 
 resource "digitalocean_kubernetes_cluster" "do_cluster" {

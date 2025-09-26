@@ -27,7 +27,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           try {
-            // Get open PRs from the flask-react-template repository
+            // Get open PRs from  repository
             const { data: prs } = await github.rest.pulls.list({
               owner: 'Namra2511',
               repo: 'test-crud-app',
@@ -68,44 +68,51 @@ jobs:
       run: |
         echo "🔧 Initializing Terraform..."
         terraform init
-        echo "✅ Terraform initialization completed"
+        echo "Terraform initialization completed"
         
     - name: Terraform Validate
       run: |
-        echo "🔍 Validating Terraform configuration..."
+        echo " Validating Terraform configuration..."
         terraform validate
-        echo "✅ Terraform configuration is valid"
+        echo " Terraform configuration is valid"
       
     - name: Detect current infrastructure state
       id: current-status
       shell: bash
       run: |
         set +e  # Explicitly disable exit on error
-        echo "🔍 Detecting current preview pool state from Terraform Cloud state..."
+        echo " Detecting current preview pool state from Terraform Cloud state..."
         
-        # Get workspace ID from terraform show (more reliable than hardcoding)
-        echo "🔧 Getting workspace information..."
-        terraform show -json > terraform_show.json 2>/dev/null || true
-        
-        # Alternative: Use Terraform Cloud API to get current state
-        echo "🔧 Fetching current state from Terraform Cloud backend..."
+        # Use Terraform Cloud API to get current state
+        echo " Fetching current state from Terraform Cloud backend..."
         
         # Use terraform state list to check if preview pool resource exists
-        terraform state list > state_resources.txt 2>/dev/null || true
-        
-        echo "📋 Current resources in state:"
-        cat state_resources.txt || echo "No state resources found"
+        echo "🔍 Fetching current Terraform state..."
+        if terraform state list > state_resources.txt 2>/dev/null; then
+          echo " Successfully retrieved Terraform state"
+          echo " Current resources in state:"
+          cat state_resources.txt
+        else
+          echo " Could not retrieve Terraform state - assuming no resources exist"
+          touch state_resources.txt  # Create empty file for consistent processing
+        fi
         
         # Check if preview pool resource exists in state (handle both indexed and non-indexed)
         if grep -q "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool" state_resources.txt; then
-          echo "✅ Preview pool resource found in state - checking if it's actually running..."
+          echo " Preview pool resource found in state - checking if it's actually running..."
           
           # Try to get the exact resource name from state list
           RESOURCE_NAME=$(grep "module.digital_ocean.digitalocean_kubernetes_node_pool.do_cluster_staging_pool" state_resources.txt | head -1)
-          echo "🔍 Found resource: $RESOURCE_NAME"
+          echo " Found resource: $RESOURCE_NAME"
           
           # Get detailed resource information using the exact name from state
-          terraform state show "$RESOURCE_NAME" > pool_details.txt 2>/dev/null || true
+          echo " Getting detailed resource information..."
+          if terraform state show "$RESOURCE_NAME" > pool_details.txt 2>/dev/null; then
+            echo " Successfully retrieved resource details"
+          else
+            echo " Could not retrieve resource details - assuming resource needs attention"
+            touch pool_details.txt  # Create empty file for consistent processing
+          fi
           
           if [ -s pool_details.txt ]; then
             # Extract key resource attributes
@@ -113,107 +120,103 @@ jobs:
             POOL_ID=$(grep -E "id\s*=" pool_details.txt | head -1 | sed 's/.*= "//' | sed 's/".*//')
             NODE_COUNT=$(grep -E "actual_node_count\s*=" pool_details.txt | head -1 | sed 's/.*= //' | sed 's/[^0-9]//g')
             
-            echo "🔍 Resource details:"
+            echo " Resource details:"
             echo "  - Pool Name: $POOL_NAME"
             echo "  - Pool ID: $POOL_ID"
             echo "  - Active Nodes: $NODE_COUNT"
             
             # Check if it's the staging pool and has active nodes
             if [[ "$POOL_NAME" == *"staging-pool"* ]] && [[ "$NODE_COUNT" -gt 0 ]]; then
-              echo "✅ Preview pool is currently ENABLED"
+              echo " Preview pool is currently ENABLED"
               echo "   - Staging pool '$POOL_NAME' is running with $NODE_COUNT active nodes"
               echo "currently-enabled=1" >> $GITHUB_OUTPUT
             elif [[ "$POOL_NAME" == *"staging-pool"* ]] && [[ "$NODE_COUNT" -eq 0 ]]; then
-              echo "⚠️ Staging pool exists but has 0 active nodes - considering DISABLED"
+              echo " Staging pool exists but has 0 active nodes - considering DISABLED"
               echo "currently-enabled=0" >> $GITHUB_OUTPUT
             else
-              echo "⚠️ Resource exists but not a staging pool (name: $POOL_NAME)"
+              echo " Resource exists but not a staging pool (name: $POOL_NAME)"
               echo "currently-enabled=0" >> $GITHUB_OUTPUT
             fi
           else
-            echo "⚠️ Preview pool resource in state but no details - assuming disabled"
+            echo " Preview pool resource in state but no details - assuming disabled"
             echo "currently-enabled=0" >> $GITHUB_OUTPUT
           fi
         else
-          echo "ℹ️ Preview pool resource NOT found in state"
-          echo "✅ Preview pool is currently DISABLED (no resource in state)"
+          echo " Preview pool resource NOT found in state"
+          echo " Preview pool is currently DISABLED (no resource in state)"
           echo "currently-enabled=0" >> $GITHUB_OUTPUT
         fi
         
-        echo "🎯 State-based detection completed"
+        echo " State-based detection completed"
         
     - name: Show Plan Before Enabling
       if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '0'
       run: |
-        echo "📋 Terraform plan to enable preview pool:"
+        echo " Terraform plan to enable preview pool:"
         terraform plan -var="enable_preview_pool=true" -no-color
         
     - name: Enable Preview Pool
       if: steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '0'
       run: |
-        echo "🚀 Enabling preview pool - found ${{ steps.check-prs.outputs.pr-count }} open PRs"
-        echo "💰 This will incur ~$14/month in costs"
+        echo " Enabling preview pool - found ${{ steps.check-prs.outputs.pr-count }} open PRs"
         
-        # Variables are automatically loaded from Terraform Cloud workspace
-        # Note: This may fail if workspace has VCS connection - consider using API-driven workflow
         terraform apply -auto-approve \
           -var="enable_preview_pool=true"
         
         if [ $? -eq 0 ]; then
-          echo "✅ Preview pool successfully enabled"
-          echo "🎯 Preview environment is now available for PR testing"
+          echo " Preview pool successfully enabled"
+          echo " Preview environment is now available for PR testing"
         else
-          echo "❌ Failed to enable preview pool"
+          echo " Failed to enable preview pool"
           exit 1
         fi
           
     - name: Show Plan Before Disabling
       if: steps.check-prs.outputs.needs-preview-pool == 'false' && steps.current-status.outputs.currently-enabled == '1'
       run: |
-        echo "📋 Terraform plan to disable preview pool:"
+        echo " Terraform plan to disable preview pool:"
         terraform plan -var="enable_preview_pool=false" -no-color
         
     - name: Disable Preview Pool
       if: steps.check-prs.outputs.needs-preview-pool == 'false' && steps.current-status.outputs.currently-enabled == '1'
       run: |
-        echo "💰 Disabling preview pool - no open PRs found"
-        echo "💵 This will save ~$14/month in costs"
+        echo " Disabling preview pool - no open PRs found"
+      
         
-        # Variables are automatically loaded from Terraform Cloud workspace
         terraform apply -auto-approve \
           -var="enable_preview_pool=false"
         
         if [ $? -eq 0 ]; then
-          echo "✅ Preview pool successfully disabled"
-          echo "💰 Cost savings activated - preview resources destroyed"
+          echo " Preview pool successfully disabled"
+          echo " Cost savings activated - preview resources destroyed"
         else
-          echo "❌ Failed to disable preview pool"
+          echo " Failed to disable preview pool"
           exit 1
         fi
           
     - name: No Action Needed
       if: (steps.check-prs.outputs.needs-preview-pool == 'true' && steps.current-status.outputs.currently-enabled == '1') || (steps.check-prs.outputs.needs-preview-pool == 'false' && steps.current-status.outputs.currently-enabled == '0')
       run: |
-        echo "ℹ️ Infrastructure state matches requirements - no action needed"
+        echo " Infrastructure state matches requirements - no action needed"
         if [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "true" ]; then
-          echo "✅ Preview pool already enabled for ${{ steps.check-prs.outputs.pr-count }} open PRs"
-          echo "🎯 Preview environment is ready for development"
+          echo " Preview pool already enabled for ${{ steps.check-prs.outputs.pr-count }} open PRs"
+          echo " Preview environment is ready for development"
         else
-          echo "✅ Preview pool already disabled - no open PRs detected"
-          echo "💰 Cost optimization is active - no unnecessary resources running"
+          echo " Preview pool already disabled - no open PRs detected"
+          echo " Cost optimization is active - no unnecessary resources running"
         fi
         
     - name: Cleanup Temporary Files
       if: always()
       run: |
-        echo "🧹 Cleaning up temporary files..."
-        rm -f terraform_show.json state_resources.txt pool_details.txt || true
-        echo "✅ Cleanup completed"
+        echo " Cleaning up temporary files..."
+        rm -f state_resources.txt pool_details.txt || true
+        echo " Cleanup completed"
         
     - name: Workflow Summary
       if: always()
       run: |
-        echo "## 📊 Reconciliation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "##  Reconciliation Summary" >> $GITHUB_STEP_SUMMARY
         echo "- **Repository**: jalantechnologies/flask-react-template" >> $GITHUB_STEP_SUMMARY
         echo "- **Open PRs**: ${{ steps.check-prs.outputs.pr-count }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Preview pool needed**: ${{ steps.check-prs.outputs.needs-preview-pool }}" >> $GITHUB_STEP_SUMMARY
@@ -221,9 +224,9 @@ jobs:
         echo "- **Workflow status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
         
         if [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "true" ] && [ "${{ steps.current-status.outputs.currently-enabled }}" == "0" ]; then
-          echo "- **Action taken**: 🚀 Enabled preview pool" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action taken**:  Enabled preview pool" >> $GITHUB_STEP_SUMMARY
         elif [ "${{ steps.check-prs.outputs.needs-preview-pool }}" == "false" ] && [ "${{ steps.current-status.outputs.currently-enabled }}" == "1" ]; then
-          echo "- **Action taken**: 💰 Disabled preview pool (saving ~$14/month)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action taken**:  Disabled preview pool " >> $GITHUB_STEP_SUMMARY
         else
-          echo "- **Action taken**: ℹ️ No change needed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action taken**:  No change needed" >> $GITHUB_STEP_SUMMARY
         fi

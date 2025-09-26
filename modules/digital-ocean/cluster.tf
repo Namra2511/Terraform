@@ -16,7 +16,7 @@ variable "do_cluster_region" {
 variable "do_cluster_node_size" {
   # list is available at https://slugs.do-api.dev/ on "Droplet Sizes"
   description = "The slug identifier for the type of Droplet to be used as workers in the node pool"
-  default     = "s-1vcpu-2gb"
+  default     = "s-2vcpu-4gb"
 }
 
 variable "enable_preview_pool" {
